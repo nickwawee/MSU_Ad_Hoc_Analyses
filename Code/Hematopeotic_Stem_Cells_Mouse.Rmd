@@ -1,0 +1,284 @@
+---
+title: "Hematopeotic Stem Cells- Seurat Analysis"
+author: "Nick Wawee"
+date: "September 16, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+setwd("D:/Immune Cell")
+library(R.utils)
+library(tidyr)
+library(dplyr)
+library(Seurat)
+library(Biobase)
+library(xlsx)
+library(knitr)
+idandname<-function(idnamemat, geneid, genename){#This function returns the desired gene name(s) or id(s) with the input of a matrix that has row names corresponding to each gene identifier and the 1st column contains the respective short name
+  if (geneid=="NA"){
+    geneid.r=rownames(idnamemat)[match(genename,idnamemat[,1])]
+    return(geneid.r)
+  }
+  if (genename=="NA"){
+    genename.r=idnamemat[match(geneid,rownames(idnamemat)),1]
+    return(genename.r)
+  }
+  
+}
+mat2numericmat<-function(mat){# this function converts a matrix of class matrix to a numeric matrix
+  if (class(mat)=="matrix"){
+    newmat<-matrix(0, length(mat[,1]),length(mat[1,]))
+    cnames<-colnames(mat)
+    rnames<-rownames(mat)
+    for (i in 1:length(newmat[,1])){
+      newmat[i,]<-sapply(mat[i,],as.numeric)
+    }
+    row.names(newmat)<-rnames
+    colnames(newmat)<-cnames
+    mat2numericmat<-newmat
+  }else{stop('the matrix is not of the matrix class. class(mat)!=matrix')}
+}
+```
+
+This document will analyze the HSC dataset published by Nestorowa et. al. with the Seurat package.
+
+```{r loading , include=FALSE}
+loadmat<-read.table('HTseq_counts.txt', stringsAsFactors = FALSE)
+idsandnames<-read.table('mousegenesymbolsandids.txt')
+row.names(idsandnames)<-idsandnames[,1]
+idsandnames<-as.data.frame(idsandnames)
+idsandnames2<-as.data.frame(idsandnames[,2])
+row.names(idsandnames2)<-rownames(idsandnames)
+
+#quality control of loading marix
+
+row.names(loadmat)<-loadmat[,1]
+tidymat<-loadmat[,-1]
+colnames(tidymat)<-tidymat[1,]
+tidymat<-tidymat[-1,]
+tidymat<-as.matrix(tidymat)
+nummat1<-mat2numericmat(tidymat)
+readcountsum<-colSums(nummat1)
+ERCCsum<-colSums(nummat1[grep("ERCC",rownames(nummat1)),])
+ERCCfrac<-ERCCsum/readcountsum
+
+genenum=rep(0,ncol(nummat1))
+for (i in 1:ncol(nummat1)){
+  genenum[i]=length(which(nummat1[,i]>0))
+}
+
+#data appears to already be filtered
+
+
+#phenoData
+cellnames<-loadmat[1,2:ncol(loadmat)]
+pd<-t(as.data.frame(cellnames))
+row.names(pd)<-cellnames
+
+
+#featureData
+geneids<-loadmat[2:nrow(loadmat),1]
+fd<-as.data.frame(geneids)
+colnames(fd)<-"gene_short_name"
+row.names(fd)<-fd$gene_short_name
+matchind<-match(rownames(idsandnames2),rownames(fd))
+matchind<-matchind[-which(is.na(matchind))]
+fd<-fd[matchind,]
+fd<-as.data.frame(fd)
+row.names(fd)<-fd[,1]
+colnames(fd)<-"gene_short_name"
+fd$gene_short_name<-idsandnames2[match(rownames(fd),rownames(idsandnames2)),1]
+#fd<-fd[match(unique(fd$gene_short_name),fd$gene_short_name),]
+fdmat<-fd
+
+#matrix
+tidymat<-loadmat[match(rownames(fdmat),loadmat[,1]),match(cellnames,loadmat[1,])]
+tidymat<-as.matrix(tidymat)
+row.names(tidymat)<-rownames(fdmat)
+colnames(tidymat)<-cellnames
+
+nummat<-mat2numericmat(tidymat)
+row.names(nummat)<-fdmat[,1]
+#Filtering Cells
+nummat<-nummat[match(unique(rownames(nummat)), rownames(nummat)),]
+
+#Filtering Genes
+goodgenes<-"Start"
+badgenes<-"Start"
+for (i in 1:nrow(nummat)){
+  geneexpression<-nummat[i,]
+  if (all(geneexpression==0)){
+    badgenes<-c(badgenes,rownames(nummat)[i])
+  }else if (length(which(geneexpression==0))/length(geneexpression)>=0.95){
+    badgenes<-c(badgenes,rownames(nummat)[i])
+  }else{
+    goodgenes<-c(goodgenes,rownames(nummat)[i])
+  }
+}
+
+goodgenes<-goodgenes[-1]
+
+nummat<-nummat[match(goodgenes,rownames(nummat)),]
+
+readcountsum2<-colSums(nummat)
+nummat<-nummat[,which(readcountsum2<4*10^6)] 
+nummat<-log2(nummat +1)
+
+HSPCindices<-grep("HSPC",colnames(nummat))
+LTHSCindices<-grep("LT",colnames(nummat))
+
+nummat<-nummat[,c(HSPCindices,LTHSCindices)]
+
+
+```
+
+
+Plots are generated to see how many genes are mapped within each cell, and the number of genes expressed in each cell. Cells with number of readcounts >=4*10^6 are filtered out of the analysis because of potential doublets. Genes are filtered out if they contained 95% or more zeros. The HSPC and LT-HSC population is filtered in to focus on potential lymphoid progenitors. After all filtering, 22290 genes and 1044 cells undergo analyses. The expression levels are log2 transformed.
+
+```{r quality control plots, fig.width=10,fig.height=6}
+bigcds<- CreateSeuratObject(raw.data = nummat)
+mito.genes <- grep(pattern = "^Mt-", x = rownames(x = bigcds@data), value = TRUE)
+mito.fraction <- Matrix::colSums(bigcds@raw.data[mito.genes,])/Matrix::colSums(bigcds@raw.data)
+bigcds<- AddMetaData(object =bigcds, metadata = mito.fraction, col.name = "mito.fraction")
+VlnPlot(object = bigcds, features.plot = c("nUMI", "nGene"), nCol= 2)
+
+```
+
+Data is normalized prior to PCA and tSNE.
+
+```{r normalizing, message=FALSE}
+#bigcds<- NormalizeData(object = bigcds)
+bigcds<- ScaleData(object = bigcds, check.for.norm = FALSE)
+bigcds<- FindVariableGenes(object = bigcds, do.plot = FALSE,mean.function = ExpMean, dispersion.function = LogVMR)
+```
+
+PCA and tSNE
+
+```{r PCA, echo=FALSE}
+bigcds<-RunPCA(bigcds, pc.genes=rownames(bigcds@scale.data), do.print = FALSE)
+#bigcds<-RunICA(bigcds, pc.genes=rownames(bigcds@scale.data), do.print = FALSE)
+PCAPlot(bigcds)
+
+bigcds<-RunTSNE(bigcds,reduction.use = "pca")
+TSNEPlot(bigcds)
+bigcds<-FindClusters(bigcds, reduction.type = "tSNE", save.SNN = FALSE, resolution=1, print.output = 0, force.recalc = TRUE)
+TSNEPlot(bigcds)
+
+```
+
+Gene expression levels are displayed in the tSNE 2-d respresentation. 3 distinct clusters are found within the data.
+
+Markers are found between each cell cluster to identify sub populations and markers are uploaded from gene ontology GO:0002320 in lymphoid cell differentiation. All markers found that were differentially expressed were matched to the genes in the GO to identify the lymphoid cell cluster.
+
+```{r finding markers}
+diffmarkers<-FindAllMarkers(bigcds)
+
+GO2320xlsx<-read.xlsx('GO_term_summary_20180922_140331.xlsx', sheetIndex = 1)
+matchind<-match(GO2320xlsx$Symbol, diffmarkers$gene)
+matchind<-matchind[-which(is.na(matchind))]
+matchedgenes<-diffmarkers[matchind,]
+matchedgenes<-arrange(matchedgenes, p_val)
+
+```
+
+It appears that clusters 0 and 1 have the most genes that match. Expression values are plotted to visualize expression within each cell.
+
+```{r plotting go2320, fig.height=12, fig.width=9}
+plotgenes<-unique(matchedgenes$gene)
+FeaturePlot(object = bigcds, features.plot =plotgenes, min.cutoff = "q9", cols.use = c("lightgrey", 
+    "blue"), pt.size = 1)
+```
+
+Expression values appear to be throughout clusters 0 and 1 . Ankle 1 codes for a protein that is highly expressed in lymphocytes https://www.proteinatlas.org/ENSG00000160117-ANKLE1/tissue/lymph+node
+
+
+All GO terms are plotted to see expression levels in cells.
+
+```{r plotting go2320 2, fig.height=18, fig.width=12}
+plotgenes<-unique(GO2320xlsx$Symbol)
+FeaturePlot(object = bigcds, features.plot =plotgenes, min.cutoff = "q9", cols.use = c("lightgrey", 
+    "blue"), pt.size = 1)
+```
+
+Genes appear to be expressed in clusters 0, 1, and 2.
+
+```{r gene names, include=FALSE}
+b1genes<-c("Tinagl1", "Trpc6", "Tgm2", "Esam", "Cish", "Scarf1", "F11r", "Tie1")
+           #"Rgs1", "Ctla2a", "Mpl", "Rab37", "Hlf", "Myct1", "Slc18a2", "Ltb", "Cd9", "Angpt1", "Clec12a", "Ncf1", "Cd69", "Tryobp", "BC035044", "Hk3", "Ccl9", "Cd52", "Sh2d5", "F630028O10Rik", "Pklr", "Snca", "Paqr9", "Sptb", "Add2", "Prss50", "Col5a1", "Hba-a1", "Abcg4", "Smim1")
+cgenes<- c("Ighv1-81", "Ccl3","Mpl","Procr", "Hoxb5", "Fgd5")
+cluster1genes<-b1genes[1:10]
+#cluster1genes<-cluster1genes[-4]
+cluster2genes<-b1genes[11:20]
+cluster3genes<-b1genes[21:30]
+#cluster3genes<-cluster3genes[-4]
+cluster4genes<-b1genes[31:40]
+```
+
+#Figure 2c genes
+```{r plotting fig2c, fig.height=9, fig.width=6}
+
+FeaturePlot(object = bigcds, features.plot =cgenes, min.cutoff = "q9", cols.use = c("lightgrey", 
+    "blue"), pt.size = 1)
+
+```
+
+Differentially expressed genes found for lymphocytes in the Nestorowa analysis appear to be expressed in clusters 0 and 1.
+
+These genes were found to be upregulated along the lymphoid differentiation pathway in Nestorowa et al.
+
+```{r plotting cluster 4, fig.height=18, fig.width=12}
+lupgenes<-c("Tespa1", "Wfdc17", "Serpinb1a", "Cd53", "Dntt", "Il12a", "Flt3", "Ighv1-77", "Satb1", "H2afy", "BC035044", "Plac8", "Cd34", "Cd52", "Ramp1", "Ucp2","Sh2d5","Emb", "Dock10", "Crip1", "Ighv1-81", "H2-Ob")
+FeaturePlot(object = bigcds, features.plot =lupgenes, min.cutoff = "q9", cols.use = c("lightgrey", 
+    "blue"), pt.size = 1)#, reduction.use = "pca")
+
+
+```
+
+Genes appear to be highly expressed in clusters 0 and 1 with a potential axis of differentiation in the negative tSNE_2 direction.
+
+Genes from an additional GO analysis GO:0030098 are loaded and matched with differentially expressed genes.
+```{r, fig.height=8, fig.width=8}
+loadgo<-read.xlsx('GO_term_summary_20180920_140528.xlsx', sheetIndex = 1)
+lymphoidsymbols<-as.character(loadgo$Symbol)
+lymphoidsymbols<-unique(lymphoidsymbols)
+matchind<-match(lymphoidsymbols, diffmarkers$gene)
+matchind<-matchind[-which(is.na(matchind))]
+matchedgenes<-diffmarkers[matchind,]
+matchedgenes<-arrange(matchedgenes, p_val)
+c0frac<-length(which(matchedgenes$cluster==0))/length(matchedgenes$cluster)
+c1frac<-length(which(matchedgenes$cluster==1))/length(matchedgenes$cluster)
+c2frac<-length(which(matchedgenes$cluster==2))/length(matchedgenes$cluster)
+labels<-c("Cluster 0", "Cluster 1", "Cluster 2")
+
+pie(c(c0frac,c1frac,c2frac)*100, labels, main="Percentages of Each Matched Cluster")
+
+fractions<-c(c0frac, c1frac, c2frac)
+names(fractions)<-labels
+fractions
+```
+
+It appears that 94% of the matched genes for lymphocyte differentiation are in clusters 0 and 1. After these analyses, it would be fair to say lymphocytes are present in clusters 0 and 1.  Cells names with cluster designations of 0 and 1 are saved and Monocle is used to sort these cells. The 22290 genes are also exported for monocle analyses.
+
+```{r table writing, fig.height=9, fig.width=6}
+#Cells
+clusters<-bigcds@meta.data$res.1
+names(clusters)<-colnames(bigcds@data)
+lymphoidcells<-clusters[which(clusters==0 | clusters==1)]
+#Genes
+goodgenes<-rownames(bigcds@data)
+
+write.xlsx(goodgenes,'lymphoidgenes.xlsx')
+write.xlsx(lymphoidcells,'lymphoidcells.xlsx')
+
+bgenes<-c("Ebf1", "Pax5", "Cd79a", "Ighv1-81", "Stat1")
+FeaturePlot(object = bigcds, features.plot =bgenes, min.cutoff = "q9", cols.use = c("lightgrey", 
+    "blue"), pt.size = 1)#, reduction.use = "pca")
+
+FeaturePlot(object = bigcds, features.plot ="Cd4", min.cutoff = "q9", cols.use = c("lightgrey", 
+    "blue"), pt.size = 1)#, reduction.use = "pca")
+
+
+```
+

@@ -1,0 +1,249 @@
+---
+title: "scRNA-seq of 8k PBMCs"
+author: "Nick Wawee"
+date: "June 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/waweenic.BME011/Desktop/Research/Immuno Single Cell Work/10xPBMC/seuratraw")
+```
+
+This markdown document analyzes single cell RNA seq data of PBMCs with the Seurat package. The raw Gene/cell matrix was obtained from the 10x Genomics website at the following web address: https://support.10xgenomics.com/single-cell-gene-expression/datasets/2.1.0/pbmc8k. The workflow of this document is based on the tutorial available on the Satija's lab website for using the Seurat package in R.
+
+The raw data contains 737280 UMIs and 33694 detected genes. This script will filter, cluster, visualize, and analyze the data. Note that 10x determined that there were 8381 cells and 21425 genes detected after the filtering using their Cell Ranger package. The words cells and UMI's are interchanged throughout this script, it is assumed that the number of UMIs equals the number of cells. RNA and Gene are interchanged throughout this script, it is assumed that the number of genes is equal to the number of RNAs.
+
+#Loading
+The global environment is cleared, and all of the necessary packages are loaded into R. 
+```{r loading, message=FALSE, warning=FALSE}
+rm(list=ls())
+library(Seurat)
+library(dplyr)
+library(knitr)
+
+```
+
+All of the .mtx and .tsv files are placed in the same working directory of the script so that the `Read10x()` function will read them properly. A new Seurat object is created by using the pbmc.data loaded into R, and all genes are kept that are expressed in 7,(0.001% of UMIs) or more cells. All cells are kept that have at least 200 detected genes.
+```{r object creation}
+pbmc.data<-Read10X(data.dir = getwd())
+pbmc<-CreateSeuratObject(raw.data = pbmc.data, min.cells = 7, min.genes = 200, project = "10X_PBMC")
+```
+#Filtering
+Mitochondrial genes are detected by searching if there is a "MT" in the gene names. A violin plot is generated to visualize what the fraction of mitochondrial RNA is in each cell. Additional violin plots of the total number of UMIs and RNAs are created.
+```{r mitochondrial fraction}
+
+mito.genes <- grep(pattern = "^MT-", x = rownames(x = pbmc@data), value = TRUE)
+mito.fraction <- Matrix::colSums(pbmc@raw.data[mito.genes,])/Matrix::colSums(pbmc@raw.data)
+pbmc <- AddMetaData(object = pbmc, metadata = mito.fraction, col.name = "mito.fraction")
+VlnPlot(object = pbmc, features.plot = c("mito.fraction", "nUMI", "nGene"), nCol= 3)
+```
+
+Gene plots are generated to create a visual representation of which cells have highly expressed mitochondrial RNA and total RNA. The total Pearson correlation is displayed above the plot. Filters are then applied after a threshold has been determined by looking at the plots.
+```{r, filter plots}
+par(mfrow = c(2, 1))
+GenePlot(object = pbmc, gene1 = "nUMI", gene2 = "mito.fraction")
+GenePlot(object = pbmc, gene1 = "nUMI", gene2 = "nGene")
+
+```
+
+The `FilterCells()` function is used to filtered in all cells that contain up to 0.065 mitochondrial RNA, and filters all cells that have 200-4100.  A table is created to compare the filtered results to the results from 10x. A gene plot is created to view the expression of CD5 and CD19 in each cell.
+```{r, filter}
+pbmc<-FilterCells(object = pbmc, subset.names = c("nGene","mito.fraction"),
+                  low.thresholds = c(200,-Inf), high.thresholds = c(4100, 0.065))
+df<-as.data.frame(cbind(c(8381,21425),c(8605,16298)))
+row.names(df)<-c("Number of Cells", "Number of Genes")
+colnames(df)<-c("10x Filtering", "New Filtering")
+kable(df,caption = "Filtering Comparison")
+GenePlot(object = pbmc, gene1= "CD5", gene2 = "CD19")
+
+```
+
+#Log Normalization
+The data is then log-normalized with the Seurat package with a default scale factor of 10^4. One data point is tested to see how the read counts are log-transformed. The expression for each log-transformed read count value is as follows:
+\[
+C_{\ln} = ln(1 \ + \frac{C*10^4}{S}) 
+\]
+Where C~ln~ is the log-transformed count value for the specific gene
+C is the read count value before the log transformation
+10^4^ is a scale factor
+Sis the sum of all the transcripts of each gene in the cell
+```{r, log-normalization, message= FALSE}
+filteredmatrix<-as.matrix(pbmc@data)#transforms sparse matrix into matrix
+sumcolumn1<-sum(filteredmatrix[,1])#takes the sum of all of the transcripts in the 1st cell
+beforelog<-filteredmatrix[497,1]#expression before log normalization
+scalefactor<-10^4
+testlogtransformexp<-log1p(beforelog*scalefactor/(sumcolumn1))
+pbmc<-NormalizeData(object = pbmc, normalization.method = "LogNormalize",
+                    scale.factor = 10^4)
+
+```
+```{r, include=FALSE}
+filteredlogmatrix<-as.matrix(pbmc@data)
+actuallogtransformexp<-filteredlogmatrix[497,1]
+if (testlogtransformexp==actuallogtransformexp){}else{stop('Unknown Log-Transformed Data')}
+
+```
+
+#Finding Variable Genes
+Next is the use of the `FindVariableGenes` function available in the Seurat package. The function calculates the average expression and dispersion for each gene, places the genes into bins, and then calculates a z-score for the dispersion within each bin. Each bin is equal in length along the x axis. The function outputs a plot so that a threshold for x and y values that are considered highly variable can be defined. With the cutoff values shown, there are 2108 genes that are considered to be variable
+
+```{r, variable genes and dispersion, message=FALSE}
+pbmc<-FindVariableGenes(object = pbmc, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 5, y.cutoff = 0.65, do.plot = FALSE)
+length(x = pbmc@var.genes)
+```
+
+# Scaling Data
+The `ScaleData()` function scales each log-transformed expression value so that they become z-scored residuals. The scaled data follows the following expression, and has an accuracy of 10^-12^:
+\[C_{scale}=\ \frac{C_{ln}-mean(C_{ln_{tot}})}{std. dev (C_{ln_{tot}})}\]
+Where C~Scale~ is the scaled expression value for the specific gene
+C~lntot~ is the log-transformed expression values of the specific gene throughout each cell
+
+
+```{r, scaling data, message= FALSE}
+pbmc<-ScaleData(object = pbmc)
+scaledmatrix<-as.matrix(pbmc@scale.data)
+scaledexp<-scaledmatrix[497,1]
+testscale<-(actuallogtransformexp-mean(filteredlogmatrix[497,]))/(sd(filteredlogmatrix[497,]))
+
+```
+```{r, include=FALSE}
+scaledmatrix<-as.matrix(pbmc@scale.data)
+scaledexp<-scaledmatrix[497,1]
+testscale<-(actuallogtransformexp-mean(filteredlogmatrix[497,]))/(sd(filteredlogmatrix[497,]))
+```
+#PCA 
+A PCA is ran on the 16298 genes with the seed set at 42. 20 principal components are computed.
+Alternatively, `pc.genes=pbmc@calc.params$ScaleData$genes.use` , if a PCA is ran with all of the genes classified as principal component genes. The first plot depicts genes that vary the most along the PC1 and PC2. The second plot shows the distribution of the cells along each principal component. The third plot is a heat map displaying 15 of the most variable genes along each principal component.
+```{r, warning= FALSE}
+pbmc <- RunPCA(object = pbmc, pc.genes = pbmc@var.genes, do.print = FALSE,pcs.compute = 10)
+pbmc<-ProjectPCA(object = pbmc, do.print = FALSE)
+VizPCA(object= pbmc, pcs.use = 1:2)
+PCAPlot(object = pbmc, dim.1=1 , dim.2=2)
+PCHeatmap(object=pbmc, pc.use=1, cells.use= 500, do.balanced = TRUE, label.columns = FALSE, use.full = TRUE, num.genes = 15)
+
+```
+
+
+#Clustering
+The `FindClusters()` function is used to implement the clustering of cells. A K-nearest neighbor (KNN) graph with edges drawn between cells with similar gene expression patters, and then it attempts to partition the graph into highly interconnected 'quasi-cliques' or 'communities.' In this instance, a KNN graph is constructed based on the euclidean distance in PCA space, and the edge weights between any two cells based on the sharp overlap in local neighborhoods are refined. The Louvain algorithm is apply to iteratively group the cells together, and has a goal of optimizing the standard modularity function.
+```{r, clustering}
+pbmc<-FindClusters(object=pbmc, reduction.type = "pca",dims.use=1:7, resolution = 0.5, print.output = 0, save.SNN = TRUE)
+```
+```{r, include=FALSE}
+PrintFindClustersParams(object=pbmc)
+```
+
+#tSNE
+tSNE is ran on the data. It aims to place cells with similar local neighborhoods in high-dimensional space together in low-dimensional space. The same amount of dimensions are used as the input for the first graph. The second graph runs the tSNE using the scaled gene expression. The function uses the `Rtsne()` function which is classified as the Barnes-Hut implementation. 
+```{r tSNE}
+pbmc<-RunTSNE(object = pbmc, dims.use=1:10, do.fast= FALSE)
+TSNEPlot(object=pbmc)
+plotobj<-FeaturePlot(object = pbmc, features.plot = c("CD5","CD19"), cols.use = c("grey", "blue"), 
+    reduction.use = "tsne", do.return = TRUE)
+
+```
+
+We see that the cluster roughly centered around (-20,25) is high in CD19 expression, this could be indicative that these cells are B cells. The next step is to examine these cell for differential gene expression, particularly looking at CD 5. 
+
+#B-Cell Analysis
+The cells names in the B-cell cluster will now be found by filtering in the cells that have tSNE1 values of -30.8 and 6.02, and tSNE2 values of 14.9 and 38.28. These values are determined by drawing straight lines on a print out of the tSNE graph and scaling appropriately.  The filtered cells are found by using the which function.
+
+#B-Cell Filtering
+```{r B-Cell Filtering, message=FALSE}
+tsnemat<-as.matrix(pbmc@dr$tsne@cell.embeddings)
+filteredindices<-which(tsnemat[,1]>-30.8 & tsnemat[,1]<6.02 & tsnemat[,2]>14.9 & tsnemat[,2]<38.28)
+betacells<-tsnemat[filteredindices,]
+betacellnames<-rownames(betacells)
+```
+
+Now that the cell names are identified, the data can be filtered with just these cells. A new Seurat object is made with just the raw data of the beta cells. The raw beta cell data is going to undergo the same filtering process with the same parameters as the original cell analysis.
+
+```{r More B-Cell Filtering, message=FALSE}
+newscaledmatrix<-scaledmatrix[,match(betacellnames,colnames(scaledmatrix))]
+newrawmatrix<-pbmc.data[,match(betacellnames,colnames(pbmc.data))]
+pbmc.beta<-CreateSeuratObject(raw.data = newrawmatrix,min.cells = 7, min.genes = 200, project = "10X_PBMC")
+mito.genes <- grep(pattern = "^MT-", x = rownames(x = pbmc.beta@data), value = TRUE)
+mito.fraction <- Matrix::colSums(pbmc.beta@raw.data[mito.genes,])/Matrix::colSums(pbmc.beta@raw.data)
+pbmc.beta<- AddMetaData(object = pbmc.beta, metadata = mito.fraction, col.name = "mito.fraction")
+pbmc.beta<-FilterCells(object = pbmc.beta, subset.names = c("nGene","mito.fraction"),
+                  low.thresholds = c(200,-Inf), high.thresholds = c(4100, 0.065))
+
+```
+
+#B-Cell Data Transformation
+The beta cell data is log normalized and scaled in the same way as the original population of cells. The variable genes are found after log normalization. 
+```{r B-cell transformation, message=FALSE}
+pbmc.beta<-NormalizeData(object=pbmc.beta,normalization.method = "LogNormalize", 
+    scale.factor = 10000)
+pbmc.beta<-FindVariableGenes(object=pbmc.beta,  mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 5, y.cutoff = 0.65, do.plot = FALSE)
+pbmc.beta<-ScaleData(object=pbmc.beta)
+
+```
+
+#B-Cell PCA, Clustering, and tSNE
+PCA, clustering, and tSNE is ran on the b-cells data. The same plots are generated as before.
+```{r B-cell PCA clustering and tSNE, fig.height=6, fig.width=6, message=FALSE, warning=FALSE}
+#PCA
+pbmc.beta <- RunPCA(object = pbmc.beta, pc.genes = pbmc.beta@var.genes, do.print = FALSE,pcs.compute = 10)
+pbmc.beta<-ProjectPCA(object = pbmc.beta, do.print = FALSE)
+VizPCA(object= pbmc.beta, pcs.use = 1:2)
+PCAPlot(object = pbmc.beta, dim.1=1 , dim.2=2)
+PCHeatmap(object=pbmc.beta, pc.use=1, cells.use= 500, do.balanced = TRUE, label.columns = FALSE, use.full = TRUE, num.genes = 15)
+#Clustering
+pbmc.beta<-FindClusters(object=pbmc.beta, reduction.type = "pca",dims.use=1:7, resolution = 0.4, print.output = 0, save.SNN = TRUE)
+#tSNE
+pbmc.beta<-RunTSNE(object = pbmc.beta, dims.use=1:10, do.fast= FALSE)
+TSNEPlot(object=pbmc.beta)
+FeaturePlot(object = pbmc.beta, features.plot = c("CD5","CD19", "LCK"), cols.use = c("grey", "blue"), reduction.use = "tsne")
+
+```
+
+It is apparent that components 0 and 1 are cells that can be classified as CD19+. 
+
+#Additional Plotting and Analysis
+Differential expression is found between clusters 0 and 1 by using the `FindMarkers()` function in the Seurat package. This function tests which genes are most deferentially expressed, and in this case it is between clusters 0 and 1. The p-values represent how statistically significant the genes are in differential expression. A violin plot is also generated of the top 3 marker names that are heterogeneous between the cluster 0 and 1 population.
+
+```{r additional plotting and analysis, echo=FALSE}
+cluster0.1markers<-FindMarkers(object=pbmc.beta,ident.1=0, ident.2 =1, min.pct = 0.1 )
+print(x=head(x=cluster0.1markers, n=15))
+cluster0.1markernames<-rownames(cluster0.1markers)
+VlnPlot(object=pbmc.beta, features.plot = cluster0.1markernames[1:3], use.raw=FALSE, use.scaled=TRUE)
+
+```
+
+A violin plot as well as Gene plots are generated of CD5's expression because it is of interest. There appears to be not a distinct difference in CD5 expression between clusters 0 and 1. 
+
+```{r CD5 plot, echo=FALSE}
+VlnPlot(object=pbmc.beta, features.plot = "CD5", use.raw=FALSE)
+GenePlot(object = pbmc.beta, gene1= "CD5", gene2 = "CD19", use.scaled = TRUE)
+```
+
+#CD19+ Filtering In for Clusters 0 & 1
+
+```{r bigblob}
+bigbnames<-pbmc.beta@meta.data$res.0.4#identifies cells from clusters 0 and 1
+names(bigbnames)<-pbmc.beta@raw.data@Dimnames[[2]]
+matchind<-which(bigbnames=="1" | bigbnames=="0" )
+bigbnames<-bigbnames[matchind]
+matchind<-match(names(bigbnames),pbmc.beta@raw.data@Dimnames[[2]])
+newmat<-pbmc.beta@raw.data[,matchind]
+goodcells<-which(newmat[match("CD19", rownames(newmat)),]>0)
+bigbnames<-bigbnames[goodcells]
+
+
+pbmc.beta2<-FilterCells(pbmc.beta, subset.names = "CD19", low.thresholds = 0,cells.use = names(bigbnames))
+
+
+#Plotting
+FeaturePlot(object = pbmc.beta2, features.plot = c("CD5","LCK"), cols.use = c("grey", "blue"), reduction.use = "tsne")
+
+mat<-pbmc.beta2@scale.data
+filtmat<-mat[match(c("CD5","LCK"),rownames(mat)),]
+ggplot(as.data.frame(t(filtmat)), aes(x=CD5, y=LCK))+
+  geom_point()
+
+```
+
+
+

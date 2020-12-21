@@ -1,0 +1,273 @@
+---
+title: "Cellular Differentiation of Hepatic Cells"
+author: "Nick Wawee"
+date: "June 8, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/waweenic.BME011/Desktop/Research/Rance_Yang")
+rm(list = ls())
+library(ggplot2)
+library(R.utils)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(gapminder)
+library(gganimate)
+library(magick)
+library(devtools)
+library(magick)
+library(tinytex)
+
+#install_github("pmur002/ffmpeg")
+#library(ffmpeg)
+
+mat2numericmat<-function(mat){# this function converts a matrix of class matrix to a numeric matrix
+  if (class(mat)=="matrix"){
+    newmat<-matrix(0, length(mat[,1]),length(mat[1,]))
+    cnames<-colnames(mat)
+    rnames<-rownames(mat)
+    for (i in 1:length(newmat[,1])){
+      newmat[i,]<-sapply(mat[i,],as.numeric)
+    }
+    row.names(newmat)<-rnames
+    colnames(newmat)<-cnames
+    mat2numericmat<-newmat
+  }else{stop('the matrix is not of the matrix class. class(mat)!=matrix')}
+}
+
+```
+
+Below are representative plots of cell clusters using Rance's,[1], data and the single- cell data from the Yang, [2], article. Pseudotime is a scale that is used to indicate the direction of the differentiation process. In this case, as pseudotime increases the cells (or samples) become more differentiated. As dose increases, the samples approach a de-differentiated state. The best visual representations of this process are shown by the tSNE clustering produced the Monocle,[3], package and the PCA clustering from the Seurat,[4], package. All concentrations of TCDD are in $\mu$g/kg.
+
+```{r, echo=FALSE }
+monocletsne<-read.table("monocletsne.txt")
+cellpd<-read.table("cellphenodata.txt")
+ptmat<-read.table("pseudotimemat.txt")
+rpt<-read.table("Rance_Pseudotime.txt")
+#Pseudotime Attachment
+ypt<-ptmat[1,2:length(ptmat[1,])]
+yptnew<-ypt[,match(rownames(cellpd)[28:length(cellpd[,1])],colnames(ypt))]
+colnames(rpt)<-"Pseudotime"
+Pt<-as.matrix(rbind(rpt,t(yptnew)))
+Pt<-mat2numericmat(Pt)
+Pt<-(Pt-min(Pt))/(max(Pt)-min(Pt))
+Pt<-Pt*100
+cellpd<-cbind(cellpd,Pt)
+cellpd<-cbind(cellpd,monocletsne)
+cellpddf<-as.data.frame(cellpd)
+
+##Plotting
+#Monocle's tSNE
+p1<-ggplot(cellpddf, aes(x=m_tSNE1, y=m_tSNE2))+
+  geom_point(aes(color=Sample_Type))+
+  labs(x="tSNE1", y="tSNE2")+
+  ggtitle('Monocle tSNE')+
+  scale_colour_discrete(name="Sample Type")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p1)
+
+p2<-ggplot(cellpddf, aes(x=m_tSNE1, y=m_tSNE2))+
+  geom_point(aes(color=Pseudotime))+
+  labs(x="tSNE1", y="tSNE2")+
+  ggtitle('Monocle tSNE')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p2)
+
+p3<-ggplot(cellpddf, aes(x=m_tSNE1, y=m_tSNE2))+
+  geom_point(aes(color=Cell_Type))+
+  labs(x="tSNE1", y="tSNE2")+
+  ggtitle('Monocle tSNE')+
+  scale_colour_discrete(name="Dose or Cell Type")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p3)
+
+#Seurat's tSNE
+p4<-ggplot(cellpddf, aes(x=tSNE_1, y=tSNE_2))+
+  geom_point(aes(color=Sample_Type))+
+  labs(x="tSNE1", y="tSNE2")+
+  ggtitle('Seurat tSNE')+
+  scale_colour_discrete(name="Sample Type")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p4)
+
+p5<-ggplot(cellpddf, aes(x=tSNE_1, y=tSNE_2))+
+  geom_point(aes(color=Pseudotime))+
+  labs(x="tSNE1", y="tSNE2")+
+  ggtitle('Seurat tSNE')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p5)
+
+p6<-ggplot(cellpddf, aes(x=tSNE_1, y=tSNE_2))+
+  geom_point(aes(color=Cell_Type))+
+  labs(x="tSNE1", y="tSNE2")+
+  ggtitle('Seurat tSNE')+
+  scale_colour_discrete(name="Dose or Cell Type")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p6)
+
+#Seurat's PCA
+p7<-ggplot(cellpddf, aes(x=PC1, y=PC2))+
+  geom_point(aes(color=Sample_Type))+
+  labs(x="PC1", y="PC2")+
+  ggtitle('Seurat PCA')+
+  scale_colour_discrete(name="Sample Type")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p7)
+
+p8<-ggplot(cellpddf, aes(x=PC1, y=PC2))+
+  geom_point(aes(color=Pseudotime))+
+  labs(x="PC1", y="PC2")+
+  ggtitle('Seurat PCA')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p8)
+
+p9<-ggplot(cellpddf, aes(x=PC1, y=PC2))+
+  geom_point(aes(color=Cell_Type))+
+  labs(x="PC1", y="PC2")+
+  ggtitle('Seurat PCA')+
+  scale_colour_discrete(name="Cell Type or Dose")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p9)
+
+```
+
+Below are animations of the dosed samples as they progress through the sample trajectory. The animations show as [TCDD] increases, pseudotime decreases which indicates that de-differentiation is occuring. 
+
+```{r animations, echo=FALSE, fig.show="animate"}
+#Animations
+pddf1<-cellpddf[1:27,]
+pddf2<-cellpddf[28:length(cellpddf[,1]),]
+pddf1<-cbind(pddf1, c(0,0,0,0.01,0.01,0.01,0.03,0.03,0.03,0.1,0.1,0.1,0.3,0.3,0.3,1,1,1,3,3,3,10,10,10,30,30,30))
+colnames(pddf1)<-c(colnames(pddf1)[-11],"Dose")
+
+p10<-ggplot(pddf1, aes(x=PC1, y=PC2, frame = Dose, cumulative = TRUE))+
+  geom_point(aes(color=Pseudotime))+
+  labs(x="PC1", y="PC2")+
+  ggtitle('[TCDD]=')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+#gganimate(p10, interval=1, "p10.gif")
+
+
+p11<-ggplot(pddf1, aes(x=m_tSNE1, y=m_tSNE2, frame = Dose, cumulative = TRUE))+
+  geom_point(aes(color=Pseudotime))+
+  labs(x="tSNE1", y="tSNE2")+
+  ggtitle('[TCDD]=')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+
+#gganimate(p11, interval=1, "p11.gif")
+
+p12<-ggplot(pddf1, aes(x=Pseudotime, y=Dose, frame = Dose, cumulative = TRUE))+
+  geom_point()+
+  labs(x="Pseudotime", y="[TCDD]")+
+  ggtitle('[TCDD]=')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+
+#gganimate(p12, interval=1,"p12.gif")
+
+
+
+```
+![**PCA Clustering**](p10.gif)
+
+
+
+
+![**tSNE Clustering**](p11.gif)
+
+
+
+
+![**Concentration of TCDD vs Pseudotime**](p12.gif)
+
+
+
+
+The animations are further configured so the averaged values for each dose is depicted.
+
+```{r animation 2, echo=FALSE, fig.show="animate"}
+pddf1bar<-colMeans(pddf1[1:3,c(3:6,8:11)])
+pddf1bar<-rbind(pddf1bar, colMeans(pddf1[4:6,c(3:6,8:11)]), colMeans(pddf1[7:9,c(3:6,8:11)]), colMeans(pddf1[10:12,c(3:6,8:11)]),colMeans(pddf1[13:15,c(3:6,8:11)]), colMeans(pddf1[16:18,c(3:6,8:11)]),colMeans(pddf1[19:21,c(3:6,8:11)]),colMeans(pddf1[22:24,c(3:6,8:11)]),colMeans(pddf1[25:27,c(3:6,8:11)]))
+pddf1bar<-as.data.frame(pddf1bar)
+
+p13<-ggplot(pddf1bar, aes(x=m_tSNE1, y=m_tSNE2, frame = Dose, cumulative = TRUE))+
+  geom_point(aes(color=Pseudotime))+
+  labs(x="tSNE1", y="tSNE2")+
+  ggtitle('[TCDD]=')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+
+#gganimate(p13, interval=1,"p13.gif")  
+
+
+p14<-ggplot(pddf1bar, aes(x=PC1, y=PC2, frame = Dose, cumulative = TRUE))+
+  geom_point(aes(color=Pseudotime))+
+  labs(x="PC1", y="PC2")+
+  ggtitle('[TCDD]=')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+
+#gganimate(p14, interval=1,"p14.gif") 
+
+p15<-ggplot(pddf1bar, aes(x=Pseudotime, y=Dose, frame = Dose, cumulative = TRUE))+
+  geom_point()+
+  labs(x="Pseudotime", y="[TCDD]")+
+  ggtitle('[TCDD]=')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+
+#gganimate(p15, interval=1, "p15.gif")
+```
+
+![**PCA Clustering - Averaged Values**](p13.gif)
+
+
+
+
+![**tSNE Clustering- Averaged Values**](p14.gif)
+
+
+
+
+![**Concentration of TCDD vs Pseudotime - Averaged Values**](p15.gif)
+
+Plots without of concentration and pseudotime without animation are shown below. 
+
+```{r dose and pt, echo=FALSE}
+p16<-ggplot(pddf1bar, aes(x=Pseudotime, y=Dose))+
+  geom_point()+
+  labs(x="Pseudotime", y="[TCDD]")+
+  ggtitle('Averaged Sample Values')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p16)
+
+p17<-ggplot(pddf1, aes(x=Pseudotime, y=Dose))+
+  geom_point()+
+  labs(x="Pseudotime", y="[TCDD]")+
+  ggtitle('Sample Values')+
+  scale_colour_continuous(name="Pseudotime")+
+  theme(plot.title = element_text(face="bold", size=21, hjust=0.5))
+print(p17)
+
+```
+
+#References
+
+[1] Nault R, Fader KA, Harkema JR, Zacharewski T (2017) Loss of liver-specific and sexually dimorphic gene expression by aryl hydrocarbon receptor activation in C57BL/6 mice. PLoS ONE 12(9): e0184842. https://doi.org/10.1371/journal.pone.0184842
+
+[2] Yang, Li & Wang, Wei-Hua & Qiu, Wei-Lin & Guo, Zhen & Bi, Erfei & Xu, Cheng-Ran. (2017). A single-cell transcriptomic analysis reveals precise pathways and regulatory mechanisms underlying hepatoblast differentiation. Hepatology. 66. 10.1002/hep.29353. 
+
+[3] C. Trapnell and X. Qiu, "Monocle", Cole-trapnell-lab.github.io, 2018. [Online]. Available: http://cole-trapnell-lab.github.io/monocle-release/docs/#acknowledgements. [Accessed: 11- Jun- 2018].
+
+[4] A. Butler, P. Hoffman, P. Smibert, E. Papalexi, and R. Satija, “Integrating single-cell transcriptomic data across different conditions, technologies, and species,” Nature News, 02-Apr-2018. [Online]. Available: https://www.nature.com/articles/nbt.4096. [Accessed: 11-Jun-2018].
+

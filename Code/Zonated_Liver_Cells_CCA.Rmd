@@ -1,0 +1,337 @@
+---
+title: "CCA on Halper & Yang"
+author: "Nick Wawee"
+date: "August 27, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/waweenic.BME011/Desktop/Research/Zonation_Yang")
+rm(list = ls())
+library(ggplot2)
+#library(monocle)
+library(R.utils)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(Hmisc)
+library(xlsx)
+#library(forecast)
+library(Biobase)
+library(Seurat)
+library(cowplot)
+orderedmatrix<-function(mat,rownumber,colnumber){ # this function will sort a matrix based on the numerical value in the designated row number in ascending order (least to greatest).
+  if (colnumber=="NA"){
+    valuevec<-as.matrix(mat[rownumber,])
+    cellnames<-rownames(valuevec)
+    genenames<-rownames(mat)
+    valuevec<-as.character(valuevec)
+    valuemat<-cbind(cellnames,valuevec)
+    numericvec<-sort(as.numeric(valuemat[,2]))
+    charactervec<-as.character(numericvec)
+    matchingindices<-match(charactervec,valuevec)
+    charactermat<-cbind(cellnames[matchingindices],charactervec)
+    orderedmatrix<-mat[,matchingindices]
+  }else if(rownumber=="NA"){
+    valuevec<-as.matrix(mat[,colnumber])
+    genenames<-rownames(valuevec)
+    cellnames<-colnames(mat)
+    valuevec<-as.character(valuevec)
+    valuemat<-cbind(genenames,valuevec)
+    numericvec<-sort(as.numeric(valuemat[,2]))
+    charactervec<-as.character(numericvec)
+    matchingindices<-match(charactervec,valuevec)
+    orderedmatrix<-mat[matchingindices,]
+  }
+}
+mat2numericmat<-function(mat){# this function converts a matrix of class matrix to a numeric matrix
+  if (class(mat)=="matrix"){
+    newmat<-matrix(0, length(mat[,1]),length(mat[1,]))
+    cnames<-colnames(mat)
+    rnames<-rownames(mat)
+    for (i in 1:length(newmat[,1])){
+      newmat[i,]<-sapply(mat[i,],as.numeric)
+    }
+    row.names(newmat)<-rnames
+    colnames(newmat)<-cnames
+    mat2numericmat<-newmat
+  }else{stop('the matrix is not of the matrix class. class(mat)!=matrix')}
+}
+scalefun<-function(evenlyspaceddata,scaling){
+  if(scaling=="statistics" & sd(evenlyspaceddata)!=0){
+    scalefun<-(evenlyspaceddata - mean(evenlyspaceddata))/sd(evenlyspaceddata)
+  } else if (scaling=="0and1"){
+    range=max(evenlyspaceddata)-min(evenlyspaceddata)
+    if (range!=0){
+      scalefun<-(evenlyspaceddata-min(evenlyspaceddata))/(max(evenlyspaceddata)-min(evenlyspaceddata))
+    }else{scalefun<-evenlyspaceddata}
+  }
+}
+
+topminmax<-function(vector, min, max, number, mag){ #takes column vector in matrix format and finds the 50 most minimum or maximum values in it and returns a new matrix vector.
+newmat<-matrix(0,number,2)
+if (mag=="Yes"){
+  vector<-abs(vector)
+}
+if (max=="NA"){
+  for (i in 1:number){
+    minval<-min(vector)
+    minind<-which.min(vector)
+    minname<-rownames(vector)[minind]
+    othernames<-rownames(vector)[-minind]
+    newmat[i,]<-c(minval,minname)
+    vector<-as.matrix(vector[-minind])
+    row.names(vector)<-othernames
+    }
+  }
+if (min=="NA"){
+    for (i in 1:number){
+    maxval<-max(vector)
+    maxind<-which.max(vector)
+    maxname<-rownames(vector)[maxind]
+    othernames<-rownames(vector)[-maxind]
+    newmat[i,]<-c(maxval,maxname)
+    vector<-as.matrix(vector[-maxind])
+    row.names(vector)<-othernames
+    }
+  }
+row.names(newmat)<-newmat[,2]
+newmat<-newmat[,-2]
+newmat<-sapply(newmat, as.numeric)
+newmat<-as.matrix(newmat)
+return(newmat)
+}
+idandname<-function(idnamemat, geneid, genename){#This function returns the desired gene name(s) or id(s) with the input of a matrix that has row names corresponding to each gene identifier and the 1st column contains the respective short name
+  if (geneid=="NA"){
+    geneid.r=rownames(idnamemat)[match(genename,idnamemat[,1])]
+    return(geneid.r)
+  }
+  if (genename=="NA"){
+    genename.r=idnamemat[match(geneid,rownames(idnamemat)),1]
+    return(genename.r)
+  }
+  
+}
+```
+
+#Loading
+
+```{r}
+#Loading
+loadmaty<-read.table("Yang_ReadCount_ERCC_Converted.txt", fill = TRUE, stringsAsFactors = FALSE)
+loadmaty2<-read.table("pseudotimemat.txt", stringsAsFactors = FALSE)
+zonatedmat<-read.table("OrderedPtMatrix_Filtered_1.txt", stringsAsFactors = FALSE)
+zonatedmat<-as.data.frame(zonatedmat)
+
+#Feature Data
+zgenes<-rownames(zonatedmat)
+zonatedmat<-cbind(zgenes,zonatedmat)
+zonatedmat$zgenes<-as.character(zonatedmat$zgenes)
+zonatedmat2<-zonatedmat %>% 
+  separate_rows(zgenes, sep=";")
+row.names(zonatedmat2)<-zonatedmat2[,1]
+
+# Testing separte_rows ---------------------------------
+testexp<-zonatedmat2[c(which(rownames(zonatedmat2)=="Apr3"),which(rownames(zonatedmat2)=="0610007C21Rik")),]
+testexp2<-zonatedmat[which(rownames(zonatedmat)=="0610007C21Rik;Apr3"),]
+#View(rbind(testexp,testexp2))
+#---------------------------------------------------------------------------------------------------------------------------------------
+
+loadmaty[,2]<-as.character(loadmaty[,2])
+matchind<-match(rownames(zonatedmat2),loadmaty[,2])
+matchind<-matchind[-which(is.na(matchind))]
+fdmat<-as.matrix(loadmaty[matchind,1:2])
+row.names(fdmat)<-fdmat[,1]
+fdmat<-as.matrix(fdmat[,-1])
+colnames(fdmat)<-"gene_short_name"
+fd<-as.data.frame(fdmat)
+fd<-new("AnnotatedDataFrame", data=fd)
+
+#Pheno Data
+#Yang
+cellnamesy<-as.matrix(colnames(loadmaty2)[which(loadmaty2[2,]=="Hepatoblast"|loadmaty2[2,]=="Hepatocyte")])
+colnames(cellnamesy)<-cellnamesy[1,]
+cellnamesy<-cbind(cellnamesy,rep("Embryonic",length(cellnamesy[,1])))
+colnames(cellnamesy)<-c("Cell_Name", "Cell_Type")
+row.names(cellnamesy)<-cellnamesy[,1]
+pt<-loadmaty2[1,match(rownames(cellnamesy),colnames(loadmaty2))]
+pt<-as.numeric(pt)
+pt<-scalefun(pt, "0and1")
+statey<-loadmaty2[2,match(rownames(cellnamesy),colnames(loadmaty2))]
+statey<-t(statey)
+colnames(statey)<-"State0"
+statey2<-statey
+colnames(statey2)<-"State2"
+cellnamesy<-cbind(cellnamesy,pt,statey,statey2)
+
+#Zonation
+cellnamesz<-as.matrix(colnames(zonatedmat2)[2:length(zonatedmat2)])
+row.names(cellnamesz)<-cellnamesz
+cellnamesz<-cbind(cellnamesz, rep("Zonation",length(cellnamesz)))
+colnames(cellnamesz)<-c("Cell_Name", "Cell_Type")
+#cellnamesz<-cellnamesz[-length(cellnamesz[,1]),]
+cellnamesz<-cbind(cellnamesz,t(zonatedmat2[c(1,4,5),-1]))
+cellnamesz[,3]<-scalefun(as.numeric((cellnamesz[,3])),"0and1")
+colnames(cellnamesz)<-colnames(cellnamesy)
+#Combination
+pdmat<-as.matrix(rbind(cellnamesy,cellnamesz))
+pddf<-as.data.frame(pdmat)
+pddf$pt<-as.numeric(as.character(pddf$pt))
+pd<-new("AnnotatedDataFrame",data=pddf)
+
+#Numeric Matrices
+
+#Yang
+
+row.names(loadmaty)<-loadmaty[,1]
+maty<-loadmaty[2:length(loadmaty[,1]),match(rownames(cellnamesy),loadmaty[1,])]
+colnames(maty)<-rownames(cellnamesy)
+maty<-as.matrix(maty)
+matchind<-match(rownames(fdmat),rownames(maty))
+maty<-maty[matchind,]
+nummaty<-mat2numericmat(maty)
+#idandname<-function(idnamemat, geneid, genename)
+row.names(nummaty)<-idandname(fdmat, rownames(nummaty),"NA")
+
+#Zonation
+tidymatz<-zonatedmat2[6:length(zonatedmat2[,1]),]
+matchind<-match(rownames(tidymatz),fdmat[,1])
+matchind<-matchind[-which(is.na(matchind))]
+tidymatz<-tidymatz[matchind,]
+row.names(tidymatz)<-rownames(fdmat)[matchind]
+matz<-as.matrix(tidymatz[,-1])
+nummatz<-mat2numericmat(matz)
+row.names(nummatz)<-idandname(fdmat, rownames(nummatz),"NA")
+
+
+```
+
+#Seurat Implementation
+
+```{r Seurat obj, warning=FALSE, message=FALSE}
+#Yang cell dataset
+cdsy <- CreateSeuratObject(raw.data = nummaty)
+cdsy <- NormalizeData(object = cdsy)
+cdsy <- ScaleData(object = cdsy)
+cdsy <- FindVariableGenes(object = cdsy, do.plot = FALSE)
+#Zonation cell dataset
+cdsz <- CreateSeuratObject(raw.data = nummatz)
+cdsz <- NormalizeData(object = cdsz)
+cdsz <- ScaleData(object = cdsz)
+cdsz <- FindVariableGenes(object = cdsz, do.plot = FALSE)
+
+# we will take the union of the top 2k variable genes in each dataset for
+# alignment note that we use 1k genes in the manuscript examples, you can
+# try this here with negligible changes to the overall results
+hvg.cdsy <- rownames(x = head(x = cdsy@hvg.info, n = 4437))
+hvg.cdsz <- rownames(x = head(x = cdsz@hvg.info, n = 4437))
+hvg.union <- union(x = hvg.cdsy, y = hvg.cdsz)
+
+cdsz@meta.data[, "protocol"] <- "Zonation"
+cdsy@meta.data[, "protocol"] <- "Yang"
+
+```
+
+
+#Running CCA
+
+```{r CCA, fig.height=6, fig.width=12}
+cdscomb<- RunCCA(object = cdsy, object2 = cdsz, genes.use = hvg.union)
+p1 <- DimPlot(object = cdscomb, reduction.use = "cca", group.by = "protocol", pt.size = 0.5, 
+    do.return = TRUE)
+p2 <- VlnPlot(object = cdscomb, features.plot = "CC1", group.by = "protocol", do.return = TRUE)
+plot_grid(p1, p2)
+
+PrintDim(object =cdscomb, reduction.type = "cca", dims.print = 1:2, genes.print = 10)
+```
+
+Choosing which CCs to use 
+
+```{r cc choice, message=FALSE,warning=FALSE}
+p3 <- MetageneBicorPlot(cdscomb, grouping.var = "protocol", dims.eval = 1:20, 
+    display.progress = FALSE)
+```
+
+20 CCs are appropriate to use
+
+Lets look at heatmaps for first 9 CCs
+
+```{r heatmap, fig.height=12, fig.width=12}
+DimHeatmap(object = cdscomb, reduction.type = "cca", 
+    dim.use = 1:9, do.balanced = TRUE)
+
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+cdscomb <- AlignSubspace(cdscomb, reduction.type = "cca", grouping.var = "protocol", 
+    dims.align = 1:20)
+```
+
+
+Violin plots to verify alignment:
+```{r vln plots}
+p1 <- VlnPlot(object = cdscomb, features.plot = "ACC1", group.by = "protocol", 
+    do.return = TRUE)
+p2 <- VlnPlot(object = cdscomb, features.plot = "ACC2", group.by = "protocol", 
+    do.return = TRUE)
+plot_grid(p1, p2)
+```
+
+The Yang data still seems a little skewed, but appears to be better aligned than the 1st.
+
+Now a tSNE is ran on the combined dataset
+
+```{r tSNE}
+cdscomb<-RunPCA(cdscomb)
+PCAPlot(cdscomb)
+cdscomb <- RunTSNE(cdscomb, reduction.use = "cca.aligned", dims.use = 1:20, 
+    do.fast = T)
+```
+
+```{r tSNE plot}
+p1 <- TSNEPlot(cdscomb, do.return = T, pt.size = 0.5, group.by = "protocol")
+print(p1)
+cdscomb <- FindClusters(cdscomb, reduction.type = "cca.aligned", 
+    resolution = .7, dims.use = 1:20)
+p2 <- TSNEPlot(cdscomb, do.label = T, do.return = T, pt.size = 0.5)
+plot_grid(p1, p2)
+```
+
+We see that there are 4 clusters found, and we look at markers that identify hepatic expression.
+
+
+```{r tSNE1, fig.height=12, fig.width=12}
+clusterb<-c("Tbx3", "Id3",  "Etv5", "Lgr5")#hepatoblast genes
+clusterc<-c("Cps1", "Ppara", "Apoh", "Cyp2d10", "Cyp2d26")#cluster c genes
+
+FeaturePlot(object = cdscomb, features.plot=c(clusterb,clusterc) )
+
+```
+
+We see that cluster 3 can be identified as hepatocytes
+
+Conserved markers are identified and plotted in a similar fashion, we use cluster 3 as an example.
+
+```{r}
+nk.markers <- FindConservedMarkers(cdscomb, ident.1=3, grouping.var = "protocol", 
+    print.bar = FALSE)
+ccamarkers<-rownames(nk.markers)
+FeaturePlot(object = cdscomb, features.plot=ccamarkers[1:12] )
+```
+
+```{r}
+write.table(ccamarkers, "ccamarkers.txt")
+tsnevals<-as.matrix(cdscomb@dr$tsne@cell.embeddings)
+write.xlsx(tsnevals, "tSNEvals2.xlsx")
+ccavals<-as.matrix(cdscomb@dr$cca@cell.embeddings)
+ccavals<-ccavals[,1:2]
+write.xlsx(ccavals,"ccavals.xlsx")
+ccamarkers<-as.matrix(cdscomb@dr$cca@gene.loadings.full)
+ccamarkers<-ccamarkers[,1:2]
+write.xlsx(ccamarkers, "ccamarkers.xlsx")
+accamarkers<-as.matrix(cdscomb@dr$cca.aligned@cell.embeddings)
+accamarkers<-accamarkers[,1:2]
+write.xlsx(accamarkers, "accamarkers.xlsx")
+```
